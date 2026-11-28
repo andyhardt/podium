@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Podium family</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Podium family">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#c63d2a">
+
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="icon-192.png">
+<style>
+  :root { --red: #c63d2a; --ink: #17130f; --soft: #6b625a; --line: #e6e0d9; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; background: var(--red); color: var(--ink); }
+  body { display: flex; align-items: center; justify-content: center; padding: 16px; font: 18px/1.5 system-ui, -apple-system, sans-serif; }
+  .card { width: 100%; max-width: 24rem; background: #fff; border-radius: 16px; padding: 28px 24px; }
+  h1 { margin: 0 0 4px; font-size: 2rem; letter-spacing: -.02em; }
+  .sub { margin: 0 0 22px; color: var(--soft); font-size: 1rem; }
+  label { display: block; font-size: .95rem; color: var(--soft); margin-bottom: 6px; }
+  input[type=password] { width: 100%; font: inherit; font-size: 20px; padding: 12px; border-radius: 10px; border: 2px solid var(--line); }
+  input[type=password]:focus { outline: 3px solid #2f7fc8; outline-offset: 1px; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; }
+  .rem { display: flex; align-items: center; gap: 6px; font-size: .95rem; color: var(--soft); margin: 0; }
+  button { font: inherit; font-weight: 600; min-height: 48px; padding: 0 22px; border: 0; border-radius: 12px; background: var(--ink); color: #fff; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  #msg { min-height: 1.5em; margin: 14px 0 0; font-size: .95rem; color: var(--soft); }
+  #msg.bad { color: var(--red); }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<main class="card">
+  <h1>Podium family</h1>
+  <p class="sub">Cheer on the champ.</p>
+  <form id="f" class="hidden" autocomplete="on">
+    <input type="text" name="username" value="podium" autocomplete="username" class="hidden" aria-hidden="true" tabindex="-1">
+    <label for="pw">Password</label>
+    <input id="pw" type="password" autocomplete="current-password" required>
+    <div class="row">
+      <label class="rem"><input id="rem" type="checkbox" checked> Remember on this device</label>
+      <button id="go" type="submit">Open</button>
+    </div>
+  </form>
+  <p id="msg" role="status" aria-live="polite">Opening&hellip;</p>
+</main>
+<script>
+// Podium is published only as ciphertext (tools/site_encrypt.py, adapted from the Deep Time Atlas's round 25 scheme).
+// This page derives the key from the password (typed, from the link's #k=..., or remembered), decrypts the page and
+// writes it into this document. Everything is inside one function: document.open keeps this window's global scope.
+(() => {
+const META = {"v": 1, "salt": "7716f3e52663e905612122ace83faf48", "iter": 600000, "file": "family.enc"};
+const $ = id => document.getElementById(id), msg = $('msg'), form = $('f');
+const STORE = 'podium-site-pw';
+const hex = h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16)));
+const say = (t, bad) => { msg.textContent = t; msg.classList.toggle('bad', !!bad); };
+let page = null;
+
+const download = () => fetch(META.file, { cache: 'no-cache' }).then(async r => { if (!r.ok) throw new Error(META.file + ' ' + r.status); return new Uint8Array(await r.arrayBuffer()); });
+async function rawKey(pw) {
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: hex(META.salt), iterations: META.iter }, base, 512);
+  return new Uint8Array(bits).slice(0, 32);
+}
+const open1 = (key, b) => crypto.subtle.decrypt({ name: 'AES-GCM', iv: b.subarray(0, 12) }, key, b.subarray(12));
+
+async function unlock(pw, remember) {
+  say('Checking the password…');
+  const raw = await rawKey(pw), key = await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['decrypt']);
+  const chk = new Uint8Array(await (await fetch('check.enc', { cache: 'no-cache' })).arrayBuffer());
+  try { await open1(key, chk); } catch (e) { return false; }
+  try { if (remember) localStorage.setItem(STORE, pw); else localStorage.removeItem(STORE); } catch (e) {}
+  say('Opening…');
+  const html = new TextDecoder().decode(await open1(key, await (page || (page = download()))));
+  window.__podiumKey = key;   // the app decrypts the voice pack with it (app.js loadVoice)
+  document.open(); document.write(html); document.close();
+  return true;
+}
+// the password from the link (#k=..., which never reaches the server), then removed from the address bar
+function fromLink() {
+  const h = location.hash.replace(/^#/, ''); if (!h) return null;
+  const p = new URLSearchParams(h), pw = p.get('k');
+  if (pw === null) return null;
+  p.delete('k'); const rest = p.toString();
+  history.replaceState(null, '', location.pathname + location.search + (rest ? '#' + rest : ''));
+  return pw;
+}
+function ask(note, bad) { form.classList.remove('hidden'); say(note || '', bad); $('pw').focus(); }
+
+form.addEventListener('submit', async ev => {
+  ev.preventDefault(); const pw = $('pw').value; if (!pw) return;
+  $('go').disabled = true;
+  try { if (!await unlock(pw, $('rem').checked)) { $('go').disabled = false; $('pw').select(); say('That password did not work.', true); } }
+  catch (e) { $('go').disabled = false; say('Something went wrong: ' + e.message + '. Try reloading.', true); }
+});
+
+(async () => {
+  if (!window.crypto || !crypto.subtle) { say('This browser cannot open Podium (it needs a secure https connection and a current browser).', true); return; }
+  page = download(); page.catch(() => {});
+  let pw = fromLink(), stored = null; try { stored = localStorage.getItem(STORE); } catch (e) {}
+  try {
+    if (pw !== null) { if (await unlock(pw, true)) return; ask('The password in that link did not work. Type it here.', true); return; }
+    if (stored) { if (await unlock(stored, true)) return; try { localStorage.removeItem(STORE); } catch (e) {} ask('The password has changed. Type the new one.', true); return; }
+    ask();
+  } catch (e) { ask('Something went wrong: ' + e.message + '. Try reloading.', true); }
+})();
+})();
+</script>
+</body>
+</html>
